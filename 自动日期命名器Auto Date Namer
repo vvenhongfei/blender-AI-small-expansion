@@ -1,0 +1,236 @@
+bl_info = {
+    "name": "自动日期命名器Auto Date Namer",
+    "author": "AI Assistant",
+    "version": (1, 7, 2),
+    "blender": (3, 0, 0),
+    "location": "File Browser > Options Tab",
+    "description": "Auto-appends date and extension to filename",
+    "category": "System",
+}
+
+import bpy
+import datetime
+
+# --- 核心逻辑 ---
+def get_extension(context):
+    """根据渲染设置获取正确的文件扩展名"""
+    try:
+        fmt = context.scene.render.image_settings.file_format
+        ext_map = {
+            'PNG': '.png',
+            'JPEG': '.jpg',
+            'BMP': '.bmp',
+            'TARGA': '.tga',
+            'TARGA_RAW': '.tga',
+            'OPEN_EXR': '.exr',
+            'OPEN_EXR_MULTILAYER': '.exr',
+            'TIFF': '.tif',
+            'HDR': '.hdr',
+            'CINEON': '.cin',
+            'DPX': '.dpx',
+            'WEBP': '.webp'
+        }
+        return ext_map.get(fmt, "")
+    except:
+        return ""
+
+def update_filename(self, context):
+    """属性变更时自动更新文件名"""
+    # 安全校验：仅在文件浏览器上下文生效
+    if not isinstance(context.space_data, bpy.types.SpaceFileBrowser):
+        return
+
+    # 获取自定义属性
+    try:
+        props = context.scene.auto_namer_props
+    except AttributeError:
+        return
+
+    base = props.base_name.strip()
+    final_name = base if base else ""
+    
+    # 1. 添加时间戳（支持全量格式）
+    if props.use_timestamp:
+        now = datetime.datetime.now()
+        fmt = props.date_format
+        
+        # 全量时间格式匹配逻辑
+        fmt_map = {
+            # 基础时分秒
+            'HH-MM-SS': "%H-%M-%S",
+            'HHMMSS': "%H%M%S",
+            # 月日时分
+            'MM-DD-HH-MM': "%m-%d-%H-%M",
+            'MMDD_HHMM': "%m%d_%H%M",
+            # 月日时分秒
+            'MM-DD_HH-MM-SS': "%m-%d_%H-%M-%S",
+            'MM-DD-HH-MM-SS': "%m-%d-%H-%M-%S",
+            'MMDD_HHMMSS': "%m%d_%H%M%S",
+            # 年-月-日 基础
+            'YYYY-MM-DD': "%Y-%m-%d",
+            'YYMMDD': "%y%m%d",
+            'YYYYMMDD': "%Y%m%d",
+            # 年-月-日 时分
+            'YYYY-MM-DD_HH-MM': "%Y-%m-%d_%H-%M",
+            'YYMMDD_HHMM': "%y%m%d_%H%M",
+            'MM-DD-YYYY_HH-MM': "%m-%d-%Y_%H-%M",
+            'DD-MM-YYYY_HH-MM': "%d-%m-%Y_%H-%M",
+            # 年-月-日 时分秒
+            'YYYY-MM-DD_HH-MM-SS': "%Y-%m-%d_%H-%M-%S",
+            'YYMMDD_HHMMSS': "%y%m%d_%H%M%S",
+            'MM-DD-YYYY_HH-MM-SS': "%m-%d-%Y_%H-%M-%S",
+            'DD-MM-YYYY_HH-MM-SS': "%d-%m-%Y_%H-%M-%S",
+        }
+        
+        # 获取格式化后的时间戳
+        ts = now.strftime(fmt_map.get(fmt, "%m-%d-%H-%M"))
+        
+        # 拼接基础名和时间戳
+        if final_name:
+            final_name = f"{final_name}-{ts}"
+        else:
+            final_name = ts
+    
+    # 2. 自动补充文件扩展名
+    ext = get_extension(context)
+    if ext and not final_name.lower().endswith(ext):
+        final_name += ext
+
+    # 3. 更新文件浏览器的文件名
+    try:
+        context.space_data.params.filename = final_name
+    except Exception as e:
+        print(f"更新文件名失败: {e}")
+
+# --- 属性定义 ---
+class AutoNamerProperties(bpy.types.PropertyGroup):
+    base_name: bpy.props.StringProperty(
+        name="基础名称",
+        description="文件的基础命名（必填）",
+        default="Car",
+        update=update_filename
+    )
+    use_timestamp: bpy.props.BoolProperty(
+        name="添加日期时间",
+        description="是否在文件名后追加时间戳",
+        default=True,
+        update=update_filename
+    )
+    date_format: bpy.props.EnumProperty(
+        name="日期格式",
+        description="选择时间戳的显示格式",
+        items=[
+            # 纯时分秒
+            ('HH-MM-SS', "HH-MM-SS", "仅时分秒 | 例：09-35-12"),
+            ('HHMMSS', "HHMMSS", "仅时分秒（紧凑） | 例：093512"),
+            # 月日时分/秒
+            ('MM-DD-HH-MM', "MM-DD-HH-MM", "月-日-时-分 | 例：12-08-09-35"),
+            ('MM-DD_HH-MM-SS', "MM-DD_HH-MM-SS", "月-日_时-分-秒 | 例：12-08_09-35-12"),
+            ('MM-DD-HH-MM-SS', "MM-DD-HH-MM-SS", "月-日-时-分-秒 | 例：12-08-09-35-12"),
+            ('MMDD_HHMM', "MMDD_HHMM", "月日_时分（紧凑） | 例：1208_0935"),
+            ('MMDD_HHMMSS', "MMDD_HHMMSS", "月日_时分秒（紧凑） | 例：1208_093512"),
+            # 纯日期
+            ('YYYY-MM-DD', "YYYY-MM-DD", "年-月-日 | 例：2025-12-08"),
+            ('YYMMDD', "YYMMDD", "年月日（短） | 例：251208"),
+            ('YYYYMMDD', "YYYYMMDD", "年月日（长） | 例：20251208"),
+            # 年月日+时分
+            ('YYYY-MM-DD_HH-MM', "YYYY-MM-DD_HH-MM", "年-月-日_时-分 | 例：2025-12-08_09-35"),
+            ('YYMMDD_HHMM', "YYMMDD_HHMM", "年月日_时分（短） | 例：251208_0935"),
+            ('MM-DD-YYYY_HH-MM', "MM-DD-YYYY_HH-MM", "月-日-年_时-分 | 例：12-08-2025_09-35"),
+            ('DD-MM-YYYY_HH-MM', "DD-MM-YYYY_HH-MM", "日-月-年_时-分 | 例：08-12-2025_09-35"),
+            # 年月日+时分秒
+            ('YYYY-MM-DD_HH-MM-SS', "YYYY-MM-DD_HH-MM-SS", "年-月-日_时-分-秒 | 例：2025-12-08_09-35-12"),
+            ('YYMMDD_HHMMSS', "YYMMDD_HHMMSS", "年月日_时分秒（短） | 例：251208_093512"),
+            ('MM-DD-YYYY_HH-MM-SS', "MM-DD-YYYY_HH-MM-SS", "月-日-年_时-分-秒 | 例：12-08-2025_09-35-12"),
+            ('DD-MM-YYYY_HH-MM-SS', "DD-MM-YYYY_HH-MM-SS", "日-月-年_时-分-秒 | 例：08-12-2025_09-35-12"),
+        ],
+        default='YYYY-MM-DD_HH-MM-SS',  # 默认最常用的完整格式
+        update=update_filename
+    )
+
+# --- UI面板 ---
+class FILEBROWSER_PT_AutoNamer(bpy.types.Panel):
+    """文件浏览器侧边栏的自动命名面板"""
+    bl_label = "自动日期命名器"
+    bl_space_type = 'FILE_BROWSER'
+    bl_region_type = 'TOOL_PROPS'
+    bl_category = "Options"
+    
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.auto_namer_props
+
+        # 主容器
+        main_box = layout.box()
+        main_box.label(text="核心设置", icon='DOCUMENTS')
+        
+        # 基础名称
+        col = main_box.column(align=True)
+        col.separator()
+        col.label(text="文件基础名：")
+        row = col.row(align=True)
+        row.scale_y = 1.2
+        row.prop(props, "base_name", text="")
+        
+        # 时间戳开关
+        col.separator()
+        row = col.row(align=True)
+        row.prop(props, "use_timestamp", toggle=True)
+        
+        # 日期格式下拉（仅开启时间戳时显示）
+        if props.use_timestamp:
+            col.separator()
+            col.label(text="时间戳格式：")
+            row = col.row(align=True)
+            row.prop(props, "date_format", text="")
+        
+        # 手动刷新按钮
+        layout.separator()
+        row = layout.row(align=True)
+        row.scale_y = 3.3
+        op = row.operator("file.update_auto_name", text="手动刷新文件名", icon='FILE_REFRESH')
+
+# --- 手动刷新操作符 ---
+class FILE_OT_UpdateAutoName(bpy.types.Operator):
+    """手动触发文件名更新的按钮"""
+    bl_idname = "file.update_auto_name"
+    bl_label = "更新文件名"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        update_filename(self, context)
+        self.report({'INFO'}, "文件名已更新！")
+        return {'FINISHED'}
+
+# --- 注册/注销 ---
+classes = (
+    AutoNamerProperties,
+    FILEBROWSER_PT_AutoNamer,
+    FILE_OT_UpdateAutoName
+)
+
+def register():
+    # 先注销旧版本（避免重复注册报错）
+    for cls in classes:
+        try:
+            bpy.utils.unregister_class(cls)
+        except:
+            pass
+    if hasattr(bpy.types.Scene, "auto_namer_props"):
+        del bpy.types.Scene.auto_namer_props
+
+    # 重新注册
+    for cls in classes:
+        bpy.utils.register_class(cls)
+    bpy.types.Scene.auto_namer_props = bpy.props.PointerProperty(type=AutoNamerProperties)
+    print("✅ 自动日期命名器注册成功！")
+
+def unregister():
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+    if hasattr(bpy.types.Scene, "auto_namer_props"):
+        del bpy.types.Scene.auto_namer_props
+    print("❌ 自动日期命名器已注销")
+
+if __name__ == "__main__":
+    register()
